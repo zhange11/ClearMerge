@@ -14,13 +14,15 @@ from .routes import (
     route_after_security,
 )
 from .state import ReviewState
+from .policy import evaluate_policy
 
 Node = Callable[[ReviewState], dict[str, Any]]
 
 
-def build_review_graph(nodes: dict[str, Node] | None = None):
+def build_review_graph(nodes: dict[str, Node] | None = None, checkpointer: Any = None):
     """Build the review StateGraph with injectable node implementations."""
-    handlers = nodes or default_nodes()
+    handlers = default_nodes()
+    handlers.update(nodes or {})
     graph = StateGraph(ReviewState)
     for name, handler in handlers.items():
         graph.add_node(name, handler)
@@ -38,7 +40,7 @@ def build_review_graph(nodes: dict[str, Node] | None = None):
     graph.add_edge("finalize_review", END)
     graph.add_edge("supersede_review", END)
     graph.add_edge("handle_failure", "finalize_review")
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 def default_nodes() -> dict[str, Node]:
@@ -48,13 +50,13 @@ def default_nodes() -> dict[str, Node]:
         "run_scanner": identity_node,
         "run_security": identity_node,
         "score_risk": identity_node,
-        "evaluate_policy": identity_node,
+        "evaluate_policy": evaluate_policy_node,
         "request_human_approval": request_human_approval,
-        "validate_human_decision": identity_node,
-        "publish_decision": identity_node,
-        "finalize_review": identity_node,
-        "supersede_review": identity_node,
-        "handle_failure": identity_node,
+        "validate_human_decision": validate_human_decision,
+        "publish_decision": publish_decision,
+        "finalize_review": finalize_review,
+        "supersede_review": supersede_review,
+        "handle_failure": handle_failure,
     }
 
 
@@ -70,7 +72,70 @@ def request_human_approval(state: ReviewState) -> dict[str, Any]:
         "message": "Human approval is required before this pull request can merge.",
     }
     decision = interrupt(request)
-    return {"status": "waiting_for_approval", "approval": decision}
+    return {"status": "running", "current_stage": "validate_human_decision", "approval": decision}
+
+
+def evaluate_policy_node(state: ReviewState) -> dict[str, Any]:
+    decision = evaluate_policy(
+        state.get("risk_assessment", {}),
+        state.get("security_results", {}),
+    )
+    return {
+        "current_stage": "evaluate_policy",
+        "policy_decision": decision,
+        "status": "waiting_for_approval" if decision == "require_approval" else "running",
+    }
+
+
+def validate_human_decision(state: ReviewState) -> dict[str, Any]:
+    approval = state.get("approval", {})
+    if approval.get("commit_sha") != state.get("commit_sha"):
+        return {"status": "failed", "current_stage": "validate_human_decision", "errors": [
+            {"stage": "validate_human_decision", "code": "stale_approval", "message": "Approval does not match the reviewed commit.", "retryable": False}
+        ]}
+    if approval.get("reviewer_id") not in state.get("authorized_reviewer_ids", []):
+        return {"status": "failed", "current_stage": "validate_human_decision", "errors": [
+            {"stage": "validate_human_decision", "code": "unauthorized_reviewer", "message": "Reviewer is not authorized for this repository.", "retryable": False}
+        ]}
+    status = "approved" if approval.get("decision") == "approve" else "rejected"
+    return {"status": status, "current_stage": "validate_human_decision"}
+
+
+def publish_decision(state: ReviewState) -> dict[str, Any]:
+    policy_decision = state.get("policy_decision")
+    approval = state.get("approval", {})
+    if policy_decision == "require_approval":
+        decision = "allow" if approval.get("decision") == "approve" else "block"
+    else:
+        decision = policy_decision
+    conclusion = "success" if decision == "allow" else "failure"
+    return {
+        "current_stage": "publish_decision",
+        "merge_decision": {
+            "decision": decision,
+            "reason_codes": [],
+            "human_approval_required": policy_decision == "require_approval",
+            "github_check_conclusion": conclusion,
+            "policy_version": "1.0",
+            "commit_sha": state.get("commit_sha", ""),
+        },
+    }
+
+
+def finalize_review(state: ReviewState) -> dict[str, Any]:
+    decision = state.get("merge_decision", {}).get("decision")
+    status = "completed" if decision == "allow" else "blocked"
+    if state.get("status") in {"failed", "superseded"}:
+        status = state["status"]
+    return {"status": status, "current_stage": "finalize_review"}
+
+
+def supersede_review(state: ReviewState) -> dict[str, Any]:
+    return {"status": "superseded", "current_stage": "supersede_review"}
+
+
+def handle_failure(state: ReviewState) -> dict[str, Any]:
+    return {"status": "failed", "current_stage": "handle_failure"}
 
 
 def identity_node(state: ReviewState) -> dict[str, Any]:

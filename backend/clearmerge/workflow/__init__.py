@@ -1,6 +1,6 @@
 """LangGraph orchestration for ClearMerge pull-request reviews."""
 
-from .state import ReviewState, ReviewStatus
+from .state import ReviewState, ReviewStatus, StageName, new_review_state
 
 
 def build_review_graph(*args, **kwargs):
@@ -10,4 +10,4 @@ def build_review_graph(*args, **kwargs):
 	return _build_review_graph(*args, **kwargs)
 
 
-__all__ = ["ReviewState", "ReviewStatus", "build_review_graph"]
+__all__ = ["ReviewState", "ReviewStatus", "StageName", "build_review_graph", "new_review_state"]

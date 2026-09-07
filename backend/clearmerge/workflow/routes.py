@@ -46,6 +46,8 @@ def route_after_human_decision(state: ReviewState) -> Route:
         return "supersede_review"
     if approval.get("commit_sha") != state.get("commit_sha"):
         return "handle_failure"
+    if approval.get("reviewer_id") not in state.get("authorized_reviewer_ids", []):
+        return "handle_failure"
     if approval.get("decision") in {"approve", "reject"}:
         return "publish_decision"
     return "handle_failure"
