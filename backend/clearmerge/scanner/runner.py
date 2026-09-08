@@ -38,6 +38,17 @@ def run_check(repo_path: Path, spec: CheckSpec, config_timeout: float, max_outpu
             shell=False,
         )
         output = redact((completed.stdout + "\n" + completed.stderr).strip())
+        if _is_missing_python_module(spec, output):
+            return CheckResult(
+                name=spec.name,
+                category=spec.category,
+                command=spec.command,
+                status=CheckStatus.SKIPPED,
+                exit_code=completed.returncode,
+                duration_ms=elapsed_ms(started),
+                output=output[:max_output_chars],
+                error=f"dependency tool is not installed: {spec.command[2]}",
+            )
         status = CheckStatus.PASSED if completed.returncode == 0 else CheckStatus.FAILED
         return CheckResult(
             name=spec.name,
@@ -91,3 +102,11 @@ def elapsed_ms(started: float) -> int:
 def _timeout_output(error: subprocess.TimeoutExpired) -> str:
     parts = [value for value in (error.stdout, error.stderr) if value]
     return "\n".join(value.decode(errors="replace") if isinstance(value, bytes) else value for value in parts)
+
+
+def _is_missing_python_module(spec: CheckSpec, output: str) -> bool:
+    return (
+        len(spec.command) >= 3
+        and spec.command[1:2] == ("-m",)
+        and f"No module named {spec.command[2]}" in output
+    )

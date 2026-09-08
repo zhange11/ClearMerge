@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -15,6 +16,8 @@ from .routes import (
 )
 from .state import ReviewState
 from .policy import evaluate_policy
+from ..scanner import ScannerAgent
+from ..scanner.agent import report_to_dict
 
 Node = Callable[[ReviewState], dict[str, Any]]
 
@@ -47,9 +50,9 @@ def default_nodes() -> dict[str, Node]:
     return {
         "initialize_review": initialize_review,
         "check_still_current": identity_node,
-        "run_scanner": identity_node,
+        "run_scanner": run_scanner_node,
         "run_security": identity_node,
-        "score_risk": identity_node,
+        "score_risk": score_risk_node,
         "evaluate_policy": evaluate_policy_node,
         "request_human_approval": request_human_approval,
         "validate_human_decision": validate_human_decision,
@@ -79,6 +82,7 @@ def evaluate_policy_node(state: ReviewState) -> dict[str, Any]:
     decision = evaluate_policy(
         state.get("risk_assessment", {}),
         state.get("security_results", {}),
+        state.get("scanner_results", {}),
     )
     return {
         "current_stage": "evaluate_policy",
@@ -136,6 +140,49 @@ def supersede_review(state: ReviewState) -> dict[str, Any]:
 
 def handle_failure(state: ReviewState) -> dict[str, Any]:
     return {"status": "failed", "current_stage": "handle_failure"}
+
+
+def run_scanner_node(state: ReviewState) -> dict[str, Any]:
+    report = ScannerAgent(repo_path=Path(state["repo_path"])).run()
+    serialized = report_to_dict(report)
+    warnings = [
+        finding
+        for finding in serialized["findings"]
+        if isinstance(finding, dict) and finding["severity"] == "low"
+    ]
+    return {
+        "current_stage": "run_scanner",
+        "status": "failed" if report.status.value == "failed" else "running",
+        "scanner_results": {**serialized, "warnings": warnings},
+    }
+
+
+def score_risk_node(state: ReviewState) -> dict[str, Any]:
+    scanner_results = state.get("scanner_results", {})
+    security_results = state.get("security_results", {})
+    scanner_warnings = scanner_results.get("warnings", [])
+    security_findings = security_results.get("findings", [])
+    has_critical = any(
+        isinstance(item, dict) and item.get("severity") == "critical"
+        for item in security_findings
+    )
+    if has_critical:
+        risk_level = "critical"
+    elif scanner_warnings:
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+    return {
+        "current_stage": "score_risk",
+        "status": "running",
+        "risk_assessment": {
+            "score": 70 if risk_level == "medium" else 10 if risk_level == "low" else 100,
+            "risk_level": risk_level,
+            "recommendation": "require_approval" if risk_level == "medium" else "block" if risk_level == "critical" else "allow",
+            "factors": scanner_warnings,
+            "confidence": 1.0,
+        },
+    }
 
 
 def identity_node(state: ReviewState) -> dict[str, Any]:

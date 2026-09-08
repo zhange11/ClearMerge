@@ -50,7 +50,8 @@ class ScannerAgentTests(unittest.TestCase):
             ).run()
 
         self.assertEqual(report.checks[0].status, CheckStatus.SKIPPED)
-        self.assertEqual(report.findings[0].severity, "info")
+        self.assertEqual(report.status, CheckStatus.PASSED)
+        self.assertEqual(report.findings[0].severity, "low")
 
     def test_timeout_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -70,6 +71,19 @@ class ScannerAgentTests(unittest.TestCase):
         self.assertNotIn("super-secret-value", output)
         self.assertNotIn("ghp_123456789", output)
         self.assertIn("[REDACTED]", output)
+
+    def test_missing_python_module_is_a_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            report = ScannerAgent(
+                Path(directory),
+                ScannerConfig(
+                    checks=(CheckSpec("missing-module", CheckCategory.DEPENDENCIES, (sys.executable, "-m", "not_installed_clearmerge_tool")),)
+                ),
+            ).run()
+
+        self.assertEqual(report.status, CheckStatus.PASSED)
+        self.assertEqual(report.checks[0].status, CheckStatus.SKIPPED)
+        self.assertEqual(report.findings[0].severity, "low")
 
 
 if __name__ == "__main__":

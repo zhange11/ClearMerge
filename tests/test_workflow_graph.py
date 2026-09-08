@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+from pathlib import Path
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
@@ -70,6 +72,23 @@ class ReviewGraphTests(unittest.TestCase):
         )
 
         self.assertEqual(completed["status"], "failed")
+
+    def test_default_workflow_runs_scanner_and_routes_missing_tool_warning_to_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "pyproject.toml").write_text("[project]\nname = 'fixture'\nversion = '0.1.0'\n")
+            state = dict(self.initial_state)
+            state["repo_path"] = directory
+            graph = build_review_graph(
+                nodes={"run_security": lambda current: {"status": "running", "security_results": {"findings": []}}},
+                checkpointer=MemorySaver(),
+            )
+
+            paused = graph.invoke(state, self.config)
+
+        self.assertEqual(paused["status"], "waiting_for_approval")
+        self.assertEqual(paused["scanner_results"]["status"], "passed")
+        self.assertTrue(paused["scanner_results"]["warnings"])
+        self.assertEqual(paused["risk_assessment"]["risk_level"], "medium")
 
 
 if __name__ == "__main__":

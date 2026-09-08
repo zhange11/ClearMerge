@@ -40,7 +40,11 @@ class ScannerAgent:
             for spec in specs
         ]
         findings = [finding_from_result(result) for result in results if result.status is not CheckStatus.PASSED]
-        status = CheckStatus.PASSED if all(result.status is CheckStatus.PASSED for result in results) else CheckStatus.FAILED
+        has_execution_failure = any(
+            result.status in {CheckStatus.FAILED, CheckStatus.TIMED_OUT}
+            for result in results
+        )
+        status = CheckStatus.FAILED if has_execution_failure else CheckStatus.PASSED
         return ScannerReport(
             status=status,
             summary=_summary(results),
@@ -73,9 +77,9 @@ def discover_checks(repo_path: Path) -> list[CheckSpec]:
 
 def finding_from_result(result: CheckResult) -> Finding:
     if result.status is CheckStatus.SKIPPED:
-        severity = "info"
+        severity = "low"
         title = f"{result.name} could not run"
-        description = result.error or "The check executable was unavailable."
+        description = result.error or "The check executable was unavailable; this is a policy warning."
     elif result.status is CheckStatus.TIMED_OUT:
         severity = "high"
         title = f"{result.name} timed out"
