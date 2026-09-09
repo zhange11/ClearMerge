@@ -24,7 +24,7 @@ class WorkflowRouteTests(unittest.TestCase):
         self.assertEqual(state["status"], "queued")
         self.assertEqual(state["current_stage"], "initialize_review")
         self.assertEqual(state["latest_commit_sha"], "abc")
-        self.assertEqual(len(STAGES), 12)
+        self.assertEqual(len(STAGES), 13)
 
     def test_current_commit_runs_scanner(self) -> None:
         state = {"commit_sha": "abc", "latest_commit_sha": "abc"}

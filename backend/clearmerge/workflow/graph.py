@@ -16,6 +16,7 @@ from .routes import (
 )
 from .state import ReviewState
 from .policy import evaluate_policy
+from .content_guard import inspect_pr_content
 from ..scanner import ScannerAgent
 from ..scanner.agent import report_to_dict
 from ..security import SecurityAgent
@@ -32,7 +33,8 @@ def build_review_graph(nodes: dict[str, Node] | None = None, checkpointer: Any =
     for name, handler in handlers.items():
         graph.add_node(name, handler)
 
-    graph.add_edge(START, "initialize_review")
+    graph.add_edge(START, "inspect_pr_content")
+    graph.add_edge("inspect_pr_content", "initialize_review")
     graph.add_edge("initialize_review", "check_still_current")
     graph.add_conditional_edges("check_still_current", route_after_current_check)
     graph.add_conditional_edges("run_scanner", route_after_scanner)
@@ -51,6 +53,7 @@ def build_review_graph(nodes: dict[str, Node] | None = None, checkpointer: Any =
 def default_nodes() -> dict[str, Node]:
     return {
         "initialize_review": initialize_review,
+        "inspect_pr_content": inspect_pr_content_node,
         "check_still_current": identity_node,
         "run_scanner": run_scanner_node,
         "run_security": run_security_node,
@@ -67,6 +70,20 @@ def default_nodes() -> dict[str, Node]:
 
 def initialize_review(state: ReviewState) -> dict[str, Any]:
     return {"status": "running", "current_stage": "initialize_review"}
+
+
+def inspect_pr_content_node(state: ReviewState) -> dict[str, Any]:
+    suspicious, patterns = inspect_pr_content(
+        state.get("pr_title", ""),
+        state.get("pr_body", ""),
+        state.get("diff_text", ""),
+    )
+    return {
+        "status": "running",
+        "current_stage": "inspect_pr_content",
+        "suspicious_diff_content": suspicious,
+        "suspicious_content_patterns": patterns,
+    }
 
 
 def request_human_approval(state: ReviewState) -> dict[str, Any]:
@@ -175,13 +192,14 @@ def score_risk_node(state: ReviewState) -> dict[str, Any]:
     scanner_warnings = scanner_results.get("warnings", [])
     security_findings = security_results.get("findings", [])
     security_warnings = security_results.get("warnings", [])
+    suspicious_content = state.get("suspicious_diff_content", False)
     has_critical = any(
         isinstance(item, dict) and item.get("severity") == "critical"
         for item in security_findings
     )
     if has_critical:
         risk_level = "critical"
-    elif scanner_warnings or security_warnings:
+    elif scanner_warnings or security_warnings or suspicious_content:
         risk_level = "medium"
     else:
         risk_level = "low"
@@ -192,7 +210,11 @@ def score_risk_node(state: ReviewState) -> dict[str, Any]:
             "score": 70 if risk_level == "medium" else 10 if risk_level == "low" else 100,
             "risk_level": risk_level,
             "recommendation": "require_approval" if risk_level == "medium" else "block" if risk_level == "critical" else "allow",
-            "factors": [*scanner_warnings, *security_warnings],
+            "factors": [
+                *scanner_warnings,
+                *security_warnings,
+                *([{"code": "suspicious_diff_content", "severity": "medium", "message": "PR content resembles instructions aimed at an LLM."}] if suspicious_content else []),
+            ],
             "confidence": 1.0,
         },
     }

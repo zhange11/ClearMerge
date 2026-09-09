@@ -18,6 +18,7 @@ ReviewStatus = Literal[
 
 StageName = Literal[
     "initialize_review",
+    "inspect_pr_content",
     "check_still_current",
     "run_scanner",
     "run_security",
@@ -78,6 +79,11 @@ class ReviewState(TypedDict, total=False):
     repository: RepositoryContext
     commit_sha: str
     repo_path: str
+    pr_title: str
+    pr_body: str
+    diff_text: str
+    suspicious_diff_content: bool
+    suspicious_content_patterns: list[str]
     status: ReviewStatus
     current_stage: StageName
     attempts: dict[str, int]
@@ -97,6 +103,7 @@ class ReviewState(TypedDict, total=False):
 
 STAGES: tuple[StageName, ...] = (
     "initialize_review",
+    "inspect_pr_content",
     "check_still_current",
     "run_scanner",
     "run_security",
@@ -112,6 +119,7 @@ STAGES: tuple[StageName, ...] = (
 
 
 LINEAR_STAGE_EDGES: tuple[tuple[StageName, StageName], ...] = (
+    ("inspect_pr_content", "initialize_review"),
     ("initialize_review", "check_still_current"),
     ("run_scanner", "run_security"),
     ("run_security", "score_risk"),
@@ -127,6 +135,9 @@ def new_review_state(
     repository: RepositoryContext,
     commit_sha: str,
     repo_path: str,
+    pr_title: str = "",
+    pr_body: str = "",
+    diff_text: str = "",
 ) -> ReviewState:
     """Create the minimum valid state for a new pull-request review."""
     return {
@@ -137,6 +148,11 @@ def new_review_state(
         "commit_sha": commit_sha,
         "latest_commit_sha": commit_sha,
         "repo_path": repo_path,
+        "pr_title": pr_title,
+        "pr_body": pr_body,
+        "diff_text": diff_text,
+        "suspicious_diff_content": False,
+        "suspicious_content_patterns": [],
         "status": "queued",
         "current_stage": "initialize_review",
         "attempts": {},
