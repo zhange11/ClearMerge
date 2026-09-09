@@ -14,7 +14,11 @@ _SECRET_PATTERNS = (
 
 
 def redact(text: str) -> str:
-    redacted = text
+    redacted = re.sub(
+        r'(?i)("?(?:api[_-]?key|token|password|secret|authorization)"?\s*:\s*")[^"]*(")',
+        r"\1[REDACTED]\2",
+        text,
+    )
     for pattern in _SECRET_PATTERNS:
         if pattern.groups >= 3:
             redacted = pattern.sub(r"\1\2\3[REDACTED]", redacted)

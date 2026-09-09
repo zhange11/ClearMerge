@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import unittest
 import tempfile
+from unittest.mock import patch
 from pathlib import Path
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
 from backend.clearmerge.workflow import build_review_graph, new_review_state
+from backend.clearmerge.security.models import SecurityReport, SecurityStatus
 
 
 class ReviewGraphTests(unittest.TestCase):
@@ -88,6 +90,27 @@ class ReviewGraphTests(unittest.TestCase):
         self.assertEqual(paused["status"], "waiting_for_approval")
         self.assertEqual(paused["scanner_results"]["status"], "passed")
         self.assertTrue(paused["scanner_results"]["warnings"])
+        self.assertEqual(paused["risk_assessment"]["risk_level"], "medium")
+
+    def test_default_security_node_warnings_reach_risk_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            state = dict(self.initial_state)
+            state["repo_path"] = directory
+            security_report = SecurityReport(
+                status=SecurityStatus.WARNING,
+                summary="1 security tool warning.",
+                warnings=[{"tool": "gitleaks", "code": "security_tool_unavailable", "message": "missing", "severity": "medium"}],
+            )
+            with patch("backend.clearmerge.workflow.graph.SecurityAgent") as security_agent:
+                security_agent.return_value.run.return_value = security_report
+                graph = build_review_graph(
+                    nodes={"run_scanner": lambda current: {"status": "running", "scanner_results": {"status": "passed"}}},
+                    checkpointer=MemorySaver(),
+                )
+                paused = graph.invoke(state, self.config)
+
+        self.assertEqual(paused["status"], "waiting_for_approval")
+        self.assertEqual(paused["security_results"]["warnings"][0]["tool"], "gitleaks")
         self.assertEqual(paused["risk_assessment"]["risk_level"], "medium")
 
 
