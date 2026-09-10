@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..llm.safety import sanitize_for_gemini
 from .models import (
     CheckCategory,
     CheckResult,
@@ -107,7 +108,7 @@ def _summary(results: list[CheckResult]) -> str:
 
 def report_to_dict(report: ScannerReport) -> dict[str, object]:
     """Serialize the report for an API or prompt payload without raw subprocess objects."""
-    return {
+    payload = {
         "status": report.status.value,
         "summary": report.summary,
         "checks": [
@@ -136,6 +137,7 @@ def report_to_dict(report: ScannerReport) -> dict[str, object]:
             for finding in report.findings
         ],
     }
+    return sanitize_for_gemini(payload)
 
 
 def report_to_json(report: ScannerReport) -> str:

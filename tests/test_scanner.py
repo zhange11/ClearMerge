@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from backend.clearmerge.scanner.agent import ScannerAgent, report_to_dict
-from backend.clearmerge.scanner.models import CheckCategory, CheckSpec, CheckStatus, ScannerConfig
+from backend.clearmerge.scanner.models import CheckCategory, CheckResult, CheckSpec, CheckStatus, Finding, ScannerConfig, ScannerReport
 from backend.clearmerge.scanner.runner import redact
 
 
@@ -70,7 +70,7 @@ class ScannerAgentTests(unittest.TestCase):
         output = redact("GEMINI_API_KEY=super-secret-value ghp_123456789")
         self.assertNotIn("super-secret-value", output)
         self.assertNotIn("ghp_123456789", output)
-        self.assertIn("[REDACTED]", output)
+        self.assertIn("[REDACTED sha256:", output)
 
     def test_missing_python_module_is_a_warning(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -84,6 +84,44 @@ class ScannerAgentTests(unittest.TestCase):
         self.assertEqual(report.status, CheckStatus.PASSED)
         self.assertEqual(report.checks[0].status, CheckStatus.SKIPPED)
         self.assertEqual(report.findings[0].severity, "low")
+
+    def test_serialized_report_redacts_and_hashes_all_secret_shaped_fields(self) -> None:
+        secret = "ghp_scanner_secret_123"
+        report = ScannerReport(
+            status=CheckStatus.FAILED,
+            summary="check failed",
+            checks=[
+                CheckResult(
+                    name="tests",
+                    category=CheckCategory.TESTS,
+                    command=("tool", f"token={secret}"),
+                    status=CheckStatus.FAILED,
+                    exit_code=1,
+                    duration_ms=3,
+                    output=f'{{"Secret": "{secret}"}}',
+                    error=f"password: {secret}",
+                )
+            ],
+            findings=[
+                Finding(
+                    id="tests:tests",
+                    category=CheckCategory.TESTS,
+                    severity="medium",
+                    title="Failure",
+                    description=f"Authorization: {secret}",
+                    check_name="tests",
+                    evidence=secret,
+                )
+            ],
+        )
+
+        serialized = report_to_dict(report)
+        serialized_text = str(serialized)
+
+        self.assertNotIn(secret, serialized_text)
+        self.assertGreaterEqual(serialized_text.count("[REDACTED sha256:"), 5)
+        command_fingerprint = serialized["checks"][0]["command"][1].split("[REDACTED ", 1)[1]
+        self.assertIn(command_fingerprint, serialized["findings"][0]["evidence"])
 
 
 if __name__ == "__main__":

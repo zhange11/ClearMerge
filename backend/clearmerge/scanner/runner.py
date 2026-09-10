@@ -1,30 +1,15 @@
 from __future__ import annotations
 
-import re
 import subprocess
 import time
 from pathlib import Path
 
+from ..llm.safety import sanitize_text_for_gemini
 from .models import CheckResult, CheckSpec, CheckStatus
-
-_SECRET_PATTERNS = (
-    re.compile(r"(?i)(api[_-]?key|token|password|secret|authorization)(\s*[:=]\s*)([\"']?)[^\s\"'&,]+"),
-    re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]+)\b"),
-)
 
 
 def redact(text: str) -> str:
-    redacted = re.sub(
-        r'(?i)("?(?:api[_-]?key|token|password|secret|authorization)"?\s*:\s*")[^"]*(")',
-        r"\1[REDACTED]\2",
-        text,
-    )
-    for pattern in _SECRET_PATTERNS:
-        if pattern.groups >= 3:
-            redacted = pattern.sub(r"\1\2\3[REDACTED]", redacted)
-        else:
-            redacted = pattern.sub("[REDACTED]", redacted)
-    return redacted
+    return sanitize_text_for_gemini(text)
 
 
 def run_check(repo_path: Path, spec: CheckSpec, config_timeout: float, max_output_chars: int) -> CheckResult:
