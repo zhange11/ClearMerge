@@ -54,6 +54,14 @@ class WorkflowRouteTests(unittest.TestCase):
         }
         self.assertEqual(route_after_human_decision(state), "handle_failure")
 
+    def test_approval_for_another_commit_fails_closed(self) -> None:
+        state = {
+            "commit_sha": "current",
+            "authorized_reviewer_ids": [987],
+            "approval": {"decision": "approve", "reviewer_id": 987, "commit_sha": "old"},
+        }
+        self.assertEqual(route_after_human_decision(state), "handle_failure")
+
     def test_policy_is_deterministic(self) -> None:
         self.assertEqual(evaluate_policy({"risk_level": "low"}, {}), "allow")
         self.assertEqual(evaluate_policy({"risk_level": "medium"}, {}), "require_approval")

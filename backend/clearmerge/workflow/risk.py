@@ -51,6 +51,7 @@ def collect_risk_factors(state: ReviewState) -> list[RiskFactor]:
         seen.add(key)
         factors.append(factor)
 
+    policy = state.get("repository_policy", {})
     scanner = state.get("scanner_results", {})
     for finding in _dict_items(scanner.get("findings")):
         category = str(finding.get("category", "verification"))
@@ -83,12 +84,36 @@ def collect_risk_factors(state: ReviewState) -> list[RiskFactor]:
             "security",
             severity,
             f"security:{finding.get('id', len(factors))}",
-            hard_block=secret and severity in {"high", "critical"} or severity == "critical",
+            hard_block=(
+                secret and severity in {"high", "critical"}
+                or severity == "critical"
+                or (bool(policy.get("block_high_findings", False)) and severity == "high")
+            ),
         ))
     for warning in _dict_items(security.get("warnings")):
         add(_warning_factor(warning, "tooling", f"security-warning:{warning.get('tool', len(factors))}"))
 
+    required_tools = policy.get("required_security_tools", [])
+    tool_results = {
+        str(tool.get("tool")): tool
+        for tool in _dict_items(security.get("tools"))
+    }
+    for required_tool in required_tools if isinstance(required_tools, list) else []:
+        tool = tool_results.get(str(required_tool))
+        unavailable = tool is None or tool.get("status") in {"warning", "failed"} or "parse" in str(tool.get("error", "")).lower()
+        if unavailable:
+            add({
+                "code": "required_security_scan_missing",
+                "category": "tooling",
+                "severity": "critical",
+                "impact": 25,
+                "evidence_ref": f"required-security-tool:{required_tool}",
+                "explanation": f"Required security tool {required_tool} did not produce valid evidence.",
+                "hard_block": True,
+            })
+
     if state.get("suspicious_diff_content"):
+        suspicious_hard_block = bool(policy.get("block_suspicious_content", False))
         add({
             "code": "suspicious_diff_content",
             "category": "content",
@@ -96,7 +121,28 @@ def collect_risk_factors(state: ReviewState) -> list[RiskFactor]:
             "impact": 20,
             "evidence_ref": "content-guard",
             "explanation": "PR content resembles instructions aimed at an LLM.",
-            "hard_block": False,
+            "hard_block": suspicious_hard_block,
+        })
+    if state.get("status") == "superseded" or state.get("latest_commit_sha", state.get("commit_sha")) != state.get("commit_sha"):
+        add({
+            "code": "stale_review_evidence",
+            "category": "verification",
+            "severity": "critical",
+            "impact": 100,
+            "evidence_ref": "review:commit",
+            "explanation": "Review evidence is stale or belongs to a superseded commit.",
+            "hard_block": True,
+        })
+    evidence_sha = state.get("evidence_commit_sha")
+    if evidence_sha and evidence_sha != state.get("commit_sha"):
+        add({
+            "code": "stale_review_evidence",
+            "category": "verification",
+            "severity": "critical",
+            "impact": 100,
+            "evidence_ref": "review:evidence-commit",
+            "explanation": "Evidence does not belong to the reviewed commit.",
+            "hard_block": True,
         })
     return factors
 
@@ -145,6 +191,11 @@ def score_risk(state: ReviewState, model: RiskModel | None = None) -> RiskAssess
         candidate = model(prompt_payload)
         assessment = validate_risk_assessment(candidate, baseline)
     except (TypeError, ValueError, KeyError):
+        if state.get("deterministic_fallback_available", True) is False:
+            baseline["hard_blocks"].append("invalid_risk_assessment")
+            baseline["recommendation"] = "block"
+            baseline["risk_level"] = "critical"
+            baseline["score"] = 100
         return baseline
     return assessment
 

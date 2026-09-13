@@ -9,6 +9,7 @@ def evaluate_policy(
     risk_assessment: dict[str, object],
     security_results: dict[str, object],
     scanner_results: dict[str, object] | None = None,
+    repository_policy: dict[str, object] | None = None,
 ) -> PolicyDecision:
     """Apply merge policy deterministically; the LLM never chooses enforcement."""
     risk_level = risk_assessment.get("risk_level")
@@ -17,6 +18,7 @@ def evaluate_policy(
     scanner_warnings = (scanner_results or {}).get("warnings", [])
     has_scanner_warning = bool(scanner_warnings)
     hard_blocks = risk_assessment.get("hard_blocks", [])
+    repository_policy = repository_policy or {}
     factors = risk_assessment.get("factors", [])
     has_approval_factor = any(
         isinstance(factor, dict)
@@ -25,6 +27,11 @@ def evaluate_policy(
     )
 
     if hard_blocks or risk_level in {"critical", "high"} or has_critical:
+        return "block"
+    if repository_policy.get("block_high_findings") and any(
+        isinstance(finding, dict) and finding.get("severity") == "high"
+        for finding in findings
+    ):
         return "block"
     if (has_scanner_warning or has_approval_factor) and risk_level == "low":
         return "require_approval"

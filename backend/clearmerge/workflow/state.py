@@ -99,6 +99,9 @@ class ReviewState(TypedDict, total=False):
     artifact_refs: list[CheckpointRef]
     updated_at: str
     latest_commit_sha: NotRequired[str]
+    evidence_commit_sha: NotRequired[str]
+    repository_policy: NotRequired[dict[str, object]]
+    deterministic_fallback_available: NotRequired[bool]
 
 
 STAGES: tuple[StageName, ...] = (

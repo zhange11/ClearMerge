@@ -98,6 +98,56 @@ class RiskScorerTests(unittest.TestCase):
 
         self.assertEqual(assessment["recommendation"], "block")
 
+    def test_required_security_tool_failure_is_hard_block(self) -> None:
+        state = self.state(
+            repository_policy={"required_security_tools": ["gitleaks"]},
+            security_results={
+                "tools": [{"tool": "gitleaks", "status": "failed", "error": "unparseable output"}],
+                "findings": [],
+                "warnings": [],
+            },
+        )
+
+        assessment = score_risk(state)
+
+        self.assertIn("required_security_scan_missing", assessment["hard_blocks"])
+        self.assertEqual(assessment["recommendation"], "block")
+
+    def test_high_finding_can_be_hard_blocked_by_repository_policy(self) -> None:
+        state = self.state(
+            repository_policy={"block_high_findings": True},
+            security_results={
+                "findings": [{"id": "s1", "tool": "semgrep", "severity": "high", "title": "Risky sink"}],
+                "warnings": [],
+            },
+        )
+
+        assessment = score_risk(state)
+
+        self.assertIn("s1", assessment["hard_blocks"])
+
+    def test_suspicious_content_can_be_hard_blocked_by_policy(self) -> None:
+        state = self.state(
+            repository_policy={"block_suspicious_content": True},
+            suspicious_diff_content=True,
+        )
+
+        assessment = score_risk(state)
+
+        self.assertIn("suspicious_diff_content", assessment["hard_blocks"])
+
+    def test_stale_and_mismatched_evidence_are_hard_blocks(self) -> None:
+        stale = score_risk(self.state(latest_commit_sha="new", evidence_commit_sha="old"))
+
+        self.assertIn("stale_review_evidence", stale["hard_blocks"])
+
+    def test_invalid_model_without_safe_fallback_is_hard_block(self) -> None:
+        state = self.state(deterministic_fallback_available=False)
+        assessment = score_risk(state, lambda payload: {"score": "invalid"})
+
+        self.assertIn("invalid_risk_assessment", assessment["hard_blocks"])
+        self.assertEqual(assessment["recommendation"], "block")
+
 
 if __name__ == "__main__":
     unittest.main()

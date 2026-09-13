@@ -107,6 +107,7 @@ def evaluate_policy_node(state: ReviewState) -> dict[str, Any]:
         state.get("risk_assessment", {}),
         state.get("security_results", {}),
         state.get("scanner_results", {}),
+        state.get("repository_policy", {}),
     )
     return {
         "current_stage": "evaluate_policy",
