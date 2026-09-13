@@ -111,7 +111,7 @@ class ReviewGraphTests(unittest.TestCase):
 
         self.assertEqual(paused["status"], "waiting_for_approval")
         self.assertEqual(paused["security_results"]["warnings"][0]["tool"], "gitleaks")
-        self.assertEqual(paused["risk_assessment"]["risk_level"], "medium")
+        self.assertEqual(paused["risk_assessment"]["risk_level"], "low")
 
     def test_pr_content_is_inspected_before_scanner(self) -> None:
         state = dict(self.initial_state)
@@ -129,7 +129,7 @@ class ReviewGraphTests(unittest.TestCase):
 
         self.assertTrue(result["suspicious_diff_content"])
         self.assertIn("instruction_override", result["suspicious_content_patterns"])
-        self.assertEqual(result["risk_assessment"]["risk_level"], "medium")
+        self.assertEqual(result["risk_assessment"]["risk_level"], "low")
 
 
 if __name__ == "__main__":

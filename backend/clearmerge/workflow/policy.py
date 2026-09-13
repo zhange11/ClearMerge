@@ -16,10 +16,17 @@ def evaluate_policy(
     has_critical = any(isinstance(item, dict) and item.get("severity") == "critical" for item in findings)
     scanner_warnings = (scanner_results or {}).get("warnings", [])
     has_scanner_warning = bool(scanner_warnings)
+    hard_blocks = risk_assessment.get("hard_blocks", [])
+    factors = risk_assessment.get("factors", [])
+    has_approval_factor = any(
+        isinstance(factor, dict)
+        and factor.get("code") in {"suspicious_diff_content", "security_tool_unavailable", "tool_warning"}
+        for factor in factors
+    )
 
-    if risk_level in {"critical", "high"} or has_critical:
+    if hard_blocks or risk_level in {"critical", "high"} or has_critical:
         return "block"
-    if has_scanner_warning and risk_level == "low":
+    if (has_scanner_warning or has_approval_factor) and risk_level == "low":
         return "require_approval"
     if risk_level == "medium":
         return "require_approval"

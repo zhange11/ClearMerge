@@ -17,6 +17,7 @@ from .routes import (
 from .state import ReviewState
 from .policy import evaluate_policy
 from .content_guard import inspect_pr_content
+from .risk import RiskModel, score_risk
 from ..scanner import ScannerAgent
 from ..scanner.agent import report_to_dict
 from ..security import SecurityAgent
@@ -25,9 +26,13 @@ from ..security.agent import report_to_dict as security_report_to_dict
 Node = Callable[[ReviewState], dict[str, Any]]
 
 
-def build_review_graph(nodes: dict[str, Node] | None = None, checkpointer: Any = None):
+def build_review_graph(
+    nodes: dict[str, Node] | None = None,
+    checkpointer: Any = None,
+    risk_model: RiskModel | None = None,
+):
     """Build the review StateGraph with injectable node implementations."""
-    handlers = default_nodes()
+    handlers = default_nodes(risk_model=risk_model)
     handlers.update(nodes or {})
     graph = StateGraph(ReviewState)
     for name, handler in handlers.items():
@@ -50,14 +55,14 @@ def build_review_graph(nodes: dict[str, Node] | None = None, checkpointer: Any =
     return graph.compile(checkpointer=checkpointer)
 
 
-def default_nodes() -> dict[str, Node]:
+def default_nodes(risk_model: RiskModel | None = None) -> dict[str, Node]:
     return {
         "initialize_review": initialize_review,
         "inspect_pr_content": inspect_pr_content_node,
         "check_still_current": identity_node,
         "run_scanner": run_scanner_node,
         "run_security": run_security_node,
-        "score_risk": score_risk_node,
+        "score_risk": lambda state: score_risk_node(state, risk_model),
         "evaluate_policy": evaluate_policy_node,
         "request_human_approval": request_human_approval,
         "validate_human_decision": validate_human_decision,
@@ -171,7 +176,7 @@ def run_scanner_node(state: ReviewState) -> dict[str, Any]:
     ]
     return {
         "current_stage": "run_scanner",
-        "status": "failed" if report.status.value == "failed" else "running",
+        "status": "running",
         "scanner_results": {**serialized, "warnings": warnings},
     }
 
@@ -181,42 +186,17 @@ def run_security_node(state: ReviewState) -> dict[str, Any]:
     serialized = security_report_to_dict(report)
     return {
         "current_stage": "run_security",
-        "status": "failed" if report.status.value == "failed" else "running",
+        "status": "running",
         "security_results": serialized,
     }
 
 
-def score_risk_node(state: ReviewState) -> dict[str, Any]:
-    scanner_results = state.get("scanner_results", {})
-    security_results = state.get("security_results", {})
-    scanner_warnings = scanner_results.get("warnings", [])
-    security_findings = security_results.get("findings", [])
-    security_warnings = security_results.get("warnings", [])
-    suspicious_content = state.get("suspicious_diff_content", False)
-    has_critical = any(
-        isinstance(item, dict) and item.get("severity") == "critical"
-        for item in security_findings
-    )
-    if has_critical:
-        risk_level = "critical"
-    elif scanner_warnings or security_warnings or suspicious_content:
-        risk_level = "medium"
-    else:
-        risk_level = "low"
+def score_risk_node(state: ReviewState, risk_model: RiskModel | None = None) -> dict[str, Any]:
+    assessment = score_risk(state, risk_model)
     return {
         "current_stage": "score_risk",
         "status": "running",
-        "risk_assessment": {
-            "score": 70 if risk_level == "medium" else 10 if risk_level == "low" else 100,
-            "risk_level": risk_level,
-            "recommendation": "require_approval" if risk_level == "medium" else "block" if risk_level == "critical" else "allow",
-            "factors": [
-                *scanner_warnings,
-                *security_warnings,
-                *([{"code": "suspicious_diff_content", "severity": "medium", "message": "PR content resembles instructions aimed at an LLM."}] if suspicious_content else []),
-            ],
-            "confidence": 1.0,
-        },
+        "risk_assessment": assessment,
     }
 
 
