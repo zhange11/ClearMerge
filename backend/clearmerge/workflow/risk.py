@@ -59,16 +59,23 @@ def collect_risk_factors(state: ReviewState) -> list[RiskFactor]:
         category = str(finding.get("category", "verification"))
         severity = _severity(finding.get("severity"))
         impact = _IMPACT_BY_SEVERITY[severity]
-        if category == "dependencies":
+        if category in {"dependency", "dependencies"}:
             impact = 20 if severity in {"high", "critical"} else 10 if severity == "medium" else 5
+        sensitive_test = category == "tests" and (
+            bool(finding.get("sensitive_area"))
+            or bool(finding.get("sensitive"))
+            or bool(finding.get("affected_sensitive_area"))
+        )
+        if sensitive_test:
+            impact = 35
         add(_finding_factor(finding, category, severity, f"scanner:{finding.get('id', len(factors))}", impact=impact))
     for check in _dict_items(scanner.get("checks")):
         status = check.get("status")
         if status in {"failed", "timed_out"}:
             category = str(check.get("category", "verification"))
             sensitive_check = bool(check.get("sensitive_area")) or bool(check.get("sensitive"))
-            severity: Severity = "high" if status == "timed_out" else ("high" if category == "dependencies" else "medium")
-            impact = 15 if status == "timed_out" else 20 if category == "dependencies" else 35 if sensitive_check else 25
+            severity: Severity = "high" if status == "timed_out" else ("high" if category in {"dependency", "dependencies"} else "medium")
+            impact = 15 if status == "timed_out" else 20 if category in {"dependency", "dependencies"} else 35 if sensitive_check else 25
             add({
                 "code": "check_timeout" if status == "timed_out" else "failing_check",
                 "category": category,

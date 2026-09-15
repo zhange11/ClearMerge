@@ -216,6 +216,39 @@ class RiskScorerTests(unittest.TestCase):
         self.assertEqual(assessment["score"], 35)
         self.assertEqual({factor["impact"] for factor in assessment["factors"]}, {20, 15})
 
+    def test_failed_dependency_check_uses_dependency_weight(self) -> None:
+        state = self.state(
+            scanner_results={
+                "checks": [{"name": "dependency-audit", "category": "dependency", "status": "failed"}],
+                "findings": [],
+                "warnings": [],
+            }
+        )
+
+        assessment = score_risk(state)
+
+        self.assertEqual(assessment["factors"][0]["code"], "failing_check")
+        self.assertEqual(assessment["factors"][0]["impact"], 20)
+
+    def test_sensitive_test_failure_uses_sensitive_test_weight(self) -> None:
+        state = self.state(
+            scanner_results={
+                "checks": [],
+                "findings": [{
+                    "id": "test-auth",
+                    "category": "tests",
+                    "severity": "medium",
+                    "title": "Authentication test failed",
+                    "sensitive_area": "authentication",
+                }],
+                "warnings": [],
+            }
+        )
+
+        assessment = score_risk(state)
+
+        self.assertEqual(assessment["factors"][0]["impact"], 35)
+
     def test_change_scope_weights_are_normalized(self) -> None:
         state = self.state(
             change_scope={
