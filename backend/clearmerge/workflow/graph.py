@@ -96,6 +96,10 @@ def request_human_approval(state: ReviewState) -> dict[str, Any]:
         "review_id": state.get("review_id"),
         "commit_sha": state.get("commit_sha"),
         "risk_assessment": state.get("risk_assessment", {}),
+        "rationale": state.get("risk_assessment", {}).get("rationale", ""),
+        "uncertainty": state.get("risk_assessment", {}).get("uncertainty", "high"),
+        "confidence": state.get("risk_assessment", {}).get("confidence", 0),
+        "uncertainty_reasons": state.get("risk_assessment", {}).get("uncertainty_reasons", []),
         "message": "Human approval is required before this pull request can merge.",
     }
     decision = interrupt(request)

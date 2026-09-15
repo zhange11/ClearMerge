@@ -29,6 +29,8 @@ class RiskAssessment(TypedDict):
     hard_blocks: list[str]
     uncertainty: Literal["low", "medium", "high"]
     confidence: float
+    rationale: str
+    uncertainty_reasons: list[str]
     required_actions: list[str]
     policy_version: str
     scorer_version: str
@@ -248,7 +250,8 @@ def calculate_deterministic_score(state: ReviewState, factors: list[RiskFactor])
     else:
         level = "low"
         recommendation = "require_approval" if requires_approval else "allow"
-    uncertainty: Literal["low", "medium", "high"] = "medium" if any(f["code"] in {"check_timeout", "security_tool_unavailable"} for f in factors) else "low"
+    uncertainty, uncertainty_reasons = _calculate_uncertainty(factors)
+    confidence = {"low": 1.0, "medium": 0.7, "high": 0.4}[uncertainty]
     return {
         "score": score,
         "risk_level": level,
@@ -256,7 +259,9 @@ def calculate_deterministic_score(state: ReviewState, factors: list[RiskFactor])
         "factors": factors,
         "hard_blocks": hard_blocks,
         "uncertainty": uncertainty,
-        "confidence": 0.7 if uncertainty == "medium" else 1.0,
+        "confidence": confidence,
+        "rationale": _build_rationale(score, level, recommendation, factors, uncertainty, uncertainty_reasons),
+        "uncertainty_reasons": uncertainty_reasons,
         "required_actions": [factor["explanation"] for factor in factors if factor["severity"] in {"high", "critical"}],
         "policy_version": "1.0",
         "scorer_version": "deterministic-1.0",
@@ -305,6 +310,8 @@ def validate_risk_assessment(candidate: dict[str, Any], baseline: RiskAssessment
     confidence = candidate.get("confidence", baseline["confidence"])
     if not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
         raise ValueError("confidence must be between 0 and 1")
+    if confidence > baseline["confidence"]:
+        raise ValueError("model cannot increase confidence beyond evidence certainty")
     _validate_factors(baseline["factors"])
     _validate_factors(candidate.get("factors", baseline["factors"]))
     _validate_text_list(candidate.get("required_actions", baseline["required_actions"]), "required_actions")
@@ -324,6 +331,8 @@ def validate_risk_assessment(candidate: dict[str, Any], baseline: RiskAssessment
         "recommendation": recommendation,
         "uncertainty": uncertainty,
         "confidence": confidence,
+        "rationale": baseline["rationale"],
+        "uncertainty_reasons": baseline["uncertainty_reasons"],
         "hard_blocks": baseline["hard_blocks"],
         "factors": baseline["factors"],
         "commit_sha": baseline["commit_sha"],
@@ -353,6 +362,51 @@ def _validate_text_list(values: Any, field_name: str) -> None:
         raise ValueError(f"{field_name} must contain at most 20 items")
     if any(not isinstance(value, str) or len(value) > _MAX_TEXT_LENGTH for value in values):
         raise ValueError(f"{field_name} contains unbounded text")
+
+
+def _calculate_uncertainty(factors: list[RiskFactor]) -> tuple[Literal["low", "medium", "high"], list[str]]:
+    reasons: list[str] = []
+    for factor in factors:
+        code = factor["code"]
+        if code == "required_security_scan_missing":
+            reasons.append("A required security tool did not produce usable evidence.")
+        elif code in {"security_tool_timeout", "check_timeout"}:
+            reasons.append("A required check or security tool timed out.")
+        elif code == "security_tool_unavailable":
+            reasons.append("A security tool was unavailable, so coverage is incomplete.")
+        elif code in {"security_tool_parser_failure", "security_tool_failed"}:
+            reasons.append("Security-tool output was incomplete or could not be trusted.")
+        elif code == "stale_review_evidence":
+            reasons.append("Evidence is not tied to the current commit.")
+    reasons = list(dict.fromkeys(reasons))
+    if any(factor["code"] in {"required_security_scan_missing", "stale_review_evidence"} for factor in factors):
+        return "high", reasons
+    if reasons:
+        return "medium", reasons
+    return "low", reasons
+
+
+def _build_rationale(
+    score: int,
+    level: RiskLevel,
+    recommendation: Recommendation,
+    factors: list[RiskFactor],
+    uncertainty: Literal["low", "medium", "high"],
+    uncertainty_reasons: list[str],
+) -> str:
+    if factors:
+        factor_summary = "; ".join(
+            f"{factor['code']} (+{factor['impact']})"
+            for factor in factors[:10]
+        )
+    else:
+        factor_summary = "no risk factors were detected"
+    certainty_summary = (
+        "Evidence is complete enough for high confidence."
+        if uncertainty == "low"
+        else f"Confidence is reduced because {' '.join(uncertainty_reasons)}"
+    )
+    return f"Risk score {score}/100 ({level}); recommendation: {recommendation}. Factors: {factor_summary}. {certainty_summary}"[:_MAX_TEXT_LENGTH]
 
 
 def _finding_factor(

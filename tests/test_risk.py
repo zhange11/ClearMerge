@@ -197,6 +197,53 @@ class RiskScorerTests(unittest.TestCase):
         self.assertEqual(assessment["risk_level"], "low")
         self.assertEqual(assessment["recommendation"], "require_approval")
 
+    def test_uncertainty_reduces_confidence_and_explains_why(self) -> None:
+        state = self.state(
+            security_results={
+                "tools": [{"tool": "semgrep", "status": "failed", "error": "timeout"}],
+                "findings": [],
+                "warnings": [],
+            }
+        )
+
+        assessment = score_risk(state)
+
+        self.assertEqual(assessment["uncertainty"], "medium")
+        self.assertEqual(assessment["confidence"], 0.7)
+        self.assertTrue(assessment["uncertainty_reasons"])
+        self.assertIn("Confidence is reduced", assessment["rationale"])
+
+    def test_unavailable_security_tool_reduces_confidence(self) -> None:
+        assessment = score_risk(self.state(
+            security_results={
+                "findings": [],
+                "warnings": [{"tool": "semgrep", "code": "security_tool_unavailable", "message": "missing"}],
+            }
+        ))
+
+        self.assertEqual(assessment["uncertainty"], "medium")
+        self.assertEqual(assessment["confidence"], 0.7)
+        self.assertIn("unavailable", assessment["rationale"])
+
+    def test_stale_evidence_has_high_uncertainty(self) -> None:
+        assessment = score_risk(self.state(latest_commit_sha="new"))
+
+        self.assertEqual(assessment["uncertainty"], "high")
+        self.assertEqual(assessment["confidence"], 0.4)
+
+    def test_model_cannot_claim_more_certainty_than_evidence(self) -> None:
+        state = self.state(
+            security_results={
+                "tools": [{"tool": "semgrep", "status": "failed", "error": "timeout"}],
+                "findings": [],
+                "warnings": [],
+            }
+        )
+
+        assessment = score_risk(state, lambda payload: {"score": 0, "risk_level": "low", "recommendation": "allow", "confidence": 1.0})
+
+        self.assertEqual(assessment["confidence"], 0.7)
+
     def test_dependency_and_tool_failure_weights_are_normalized(self) -> None:
         state = self.state(
             scanner_results={
