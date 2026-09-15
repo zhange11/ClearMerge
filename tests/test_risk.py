@@ -148,6 +148,99 @@ class RiskScorerTests(unittest.TestCase):
         self.assertIn("invalid_risk_assessment", assessment["hard_blocks"])
         self.assertEqual(assessment["recommendation"], "block")
 
+    def test_invalid_model_enums_evidence_and_text_fall_back(self) -> None:
+        state = self.state(
+            security_results={
+                "findings": [{"id": "s1", "tool": "semgrep", "severity": "medium", "title": "Finding"}],
+                "warnings": [],
+            }
+        )
+
+        invalid_candidates = (
+            {"score": 20, "risk_level": "unknown", "recommendation": "allow"},
+            {"score": 20, "risk_level": "low", "recommendation": "allow", "uncertainty": "unknown"},
+            {"score": 20, "risk_level": "low", "recommendation": "allow", "confidence": 2},
+            {"score": 20, "risk_level": "low", "recommendation": "allow", "factors": [{"impact": 1}]},
+            {"score": 20, "risk_level": "low", "recommendation": "allow", "required_actions": ["x" * 501]},
+        )
+
+        for candidate in invalid_candidates:
+            with self.subTest(candidate=candidate):
+                assessment = score_risk(state, lambda payload, candidate=candidate: candidate)
+                self.assertEqual(assessment["score"], 20)
+                self.assertEqual(assessment["risk_level"], "low")
+
+    def test_model_cannot_downgrade_medium_risk_to_allow(self) -> None:
+        state = self.state(
+            scanner_results={
+                "checks": [{"name": "pytest", "category": "tests", "status": "failed"}],
+                "findings": [],
+                "warnings": [],
+            }
+        )
+
+        assessment = score_risk(state, lambda payload: {"score": 1, "risk_level": "medium", "recommendation": "allow"})
+
+        self.assertEqual(assessment["recommendation"], "require_approval")
+
+    def test_low_risk_optional_tool_warning_requires_approval(self) -> None:
+        state = self.state(
+            scanner_results={
+                "checks": [],
+                "findings": [],
+                "warnings": [{"code": "tool_warning", "message": "optional tool missing"}],
+            }
+        )
+
+        assessment = score_risk(state)
+
+        self.assertEqual(assessment["risk_level"], "low")
+        self.assertEqual(assessment["recommendation"], "require_approval")
+
+    def test_dependency_and_tool_failure_weights_are_normalized(self) -> None:
+        state = self.state(
+            scanner_results={
+                "checks": [{"name": "pip-audit", "category": "dependencies", "status": "failed"}],
+                "findings": [],
+                "warnings": [],
+            },
+            security_results={
+                "tools": [{"tool": "semgrep", "status": "failed", "error": "timeout"}],
+                "findings": [],
+                "warnings": [],
+            },
+        )
+
+        assessment = score_risk(state)
+
+        self.assertEqual(assessment["score"], 35)
+        self.assertEqual({factor["impact"] for factor in assessment["factors"]}, {20, 15})
+
+    def test_change_scope_weights_are_normalized(self) -> None:
+        state = self.state(
+            change_scope={
+                "sensitive_areas": ["authentication", "deployment"],
+                "dependency_manifest_changed": True,
+                "migration_changed": True,
+                "lines_added": 600,
+                "lines_deleted": 0,
+                "behavior_change": True,
+                "tests_added": False,
+            }
+        )
+
+        assessment = score_risk(state)
+        codes = {factor["code"] for factor in assessment["factors"]}
+
+        self.assertEqual(assessment["score"], 60)
+        self.assertEqual(codes, {
+            "sensitive_area_change",
+            "dependency_manifest_change",
+            "migration_or_infrastructure_change",
+            "large_change",
+            "no_tests_added",
+        })
+
 
 if __name__ == "__main__":
     unittest.main()

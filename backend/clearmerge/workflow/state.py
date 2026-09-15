@@ -82,6 +82,7 @@ class ReviewState(TypedDict, total=False):
     pr_title: str
     pr_body: str
     diff_text: str
+    change_scope: NotRequired[dict[str, object]]
     suspicious_diff_content: bool
     suspicious_content_patterns: list[str]
     status: ReviewStatus
@@ -141,6 +142,7 @@ def new_review_state(
     pr_title: str = "",
     pr_body: str = "",
     diff_text: str = "",
+    change_scope: dict[str, object] | None = None,
 ) -> ReviewState:
     """Create the minimum valid state for a new pull-request review."""
     return {
@@ -150,10 +152,12 @@ def new_review_state(
         "repository": repository,
         "commit_sha": commit_sha,
         "latest_commit_sha": commit_sha,
+        "evidence_commit_sha": commit_sha,
         "repo_path": repo_path,
         "pr_title": pr_title,
         "pr_body": pr_body,
         "diff_text": diff_text,
+        "change_scope": change_scope or {},
         "suspicious_diff_content": False,
         "suspicious_content_patterns": [],
         "status": "queued",

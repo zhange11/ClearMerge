@@ -66,6 +66,14 @@ class WorkflowRouteTests(unittest.TestCase):
         self.assertEqual(evaluate_policy({"risk_level": "low"}, {}), "allow")
         self.assertEqual(evaluate_policy({"risk_level": "medium"}, {}), "require_approval")
         self.assertEqual(evaluate_policy({"risk_level": "low"}, {"findings": [{"severity": "critical"}]}), "block")
+        self.assertEqual(
+            evaluate_policy(
+                {"risk_level": "low", "factors": [{"code": "tool_warning"}]},
+                {},
+                {"warnings": [{"code": "tool_warning"}]},
+            ),
+            "require_approval",
+        )
 
 
 if __name__ == "__main__":
