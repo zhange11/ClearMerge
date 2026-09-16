@@ -244,6 +244,29 @@ class RiskScorerTests(unittest.TestCase):
 
         self.assertEqual(assessment["confidence"], 0.7)
 
+    def test_model_cannot_reduce_uncertainty_below_evidence_quality(self) -> None:
+        state = self.state(
+            security_results={
+                "tools": [{"tool": "semgrep", "status": "failed", "error": "timeout"}],
+                "findings": [],
+                "warnings": [],
+            }
+        )
+
+        assessment = score_risk(
+            state,
+            lambda payload: {
+                "score": 0,
+                "risk_level": "low",
+                "recommendation": "allow",
+                "uncertainty": "low",
+                "confidence": 0.7,
+            },
+        )
+
+        self.assertEqual(assessment["uncertainty"], "medium")
+        self.assertEqual(assessment["confidence"], 0.7)
+
     def test_dependency_and_tool_failure_weights_are_normalized(self) -> None:
         state = self.state(
             scanner_results={

@@ -41,6 +41,7 @@ RiskModel = Callable[[dict[str, Any]], dict[str, Any]]
 _IMPACT_BY_SEVERITY = {"info": 0, "low": 5, "medium": 20, "high": 35, "critical": 70}
 _MAX_TEXT_LENGTH = 500
 _RECOMMENDATION_RANK = {"allow": 0, "require_approval": 1, "block": 2}
+_UNCERTAINTY_RANK = {"low": 0, "medium": 1, "high": 2}
 
 
 def collect_risk_factors(state: ReviewState) -> list[RiskFactor]:
@@ -310,6 +311,8 @@ def validate_risk_assessment(candidate: dict[str, Any], baseline: RiskAssessment
     confidence = candidate.get("confidence", baseline["confidence"])
     if not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
         raise ValueError("confidence must be between 0 and 1")
+    if _UNCERTAINTY_RANK[uncertainty] < _UNCERTAINTY_RANK[baseline["uncertainty"]]:
+        raise ValueError("model cannot reduce uncertainty below evidence certainty")
     if confidence > baseline["confidence"]:
         raise ValueError("model cannot increase confidence beyond evidence certainty")
     _validate_factors(baseline["factors"])
