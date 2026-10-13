@@ -13,6 +13,7 @@ from ..config import Settings
 from ..github.adapter import GitHubRepositoryAdapter
 from ..github.models import PullRequestEvent
 from ..workflow import build_review_graph, new_review_state
+from .queue import ReviewJob, ReviewQueue
 
 
 @dataclass
@@ -26,9 +27,10 @@ class ReviewRecord:
 class ReviewService:
     """MVP review registry and graph dispatcher; replace storage with PostgreSQL/queue later."""
 
-    def __init__(self, settings: Settings, github: GitHubRepositoryAdapter | None = None) -> None:
+    def __init__(self, settings: Settings, github: GitHubRepositoryAdapter | None = None, queue: ReviewQueue | None = None) -> None:
         self.settings = settings
         self.github = github
+        self.queue = queue
         self._lock = Lock()
         self._by_id: dict[str, ReviewRecord] = {}
         self._by_delivery: dict[str, str] = {}
@@ -76,7 +78,11 @@ class ReviewService:
             self._by_id[review_id] = record
             self._by_delivery[event.delivery_id] = review_id
             self._by_revision[revision_key] = review_id
-        if self.settings.review_worker_mode == "inline":
+        if self.settings.review_worker_mode == "queue":
+            if self.queue is None:
+                raise RuntimeError("queue mode requires a review queue")
+            self.queue.enqueue(ReviewJob(record.review_id, record.state))
+        else:
             self._run(record)
             if self.github and record.state.get("merge_decision"):
                 self.github.publish_decision(record.state)
@@ -93,6 +99,27 @@ class ReviewService:
         result = self._graph.invoke(Command(resume=decision), config=config)
         record.state = dict(result)
         return record
+
+    def run_state(self, review_id: str, state: dict[str, Any]) -> ReviewRecord:
+        record = self._by_id.get(review_id)
+        if record is None:
+            record = ReviewRecord(
+                review_id=review_id,
+                delivery_id="worker-recovered",
+                thread_id=str(state.get("thread_id", f"review:{review_id}")),
+                state=state,
+            )
+            self._by_id[review_id] = record
+        record.state = state
+        self._run(record)
+        if self.github and record.state.get("merge_decision"):
+            self.github.publish_decision(record.state)
+        return record
+
+    def mark_failed(self, review_id: str, code: str) -> None:
+        record = self._by_id.get(review_id)
+        if record is not None:
+            record.state.update({"status": "failed", "errors": [{"stage": "handle_failure", "code": code, "message": "Review worker retry limit reached.", "retryable": False}]})
 
     def _run(self, record: ReviewRecord) -> None:
         config = {"configurable": {"thread_id": record.thread_id}}

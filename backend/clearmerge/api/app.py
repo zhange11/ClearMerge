@@ -7,6 +7,7 @@ from ..config import Settings
 from ..github.adapter import GitHubRepositoryAdapter
 from ..github.client import GitHubAppClient
 from ..services.reviews import ReviewService
+from ..services.queue import InMemoryReviewQueue, RedisReviewQueue
 from .webhooks import router as webhook_router
 from .reviews import router as reviews_router
 
@@ -18,7 +19,14 @@ def create_app(settings: Settings | None = None, review_service: ReviewService |
         github_adapter = None
         if app.state.settings.github_app_id and app.state.settings.private_key():
             github_adapter = GitHubRepositoryAdapter(GitHubAppClient(app.state.settings))
-        review_service = ReviewService(app.state.settings, github=github_adapter)
+        queue = None
+        if app.state.settings.review_worker_mode == "queue":
+            queue = (
+                RedisReviewQueue(app.state.settings.redis_url)
+                if app.state.settings.redis_url
+                else InMemoryReviewQueue()
+            )
+        review_service = ReviewService(app.state.settings, github=github_adapter, queue=queue)
     app.state.review_service = review_service
 
     @app.middleware("http")

@@ -21,6 +21,7 @@ class Settings:
 	public_base_url: str | None
 	max_webhook_body_bytes: int
 	review_worker_mode: str
+	redis_url: str | None = None
 
 	@classmethod
 	def from_env(cls, environ: Mapping[str, str] | None = None) -> "Settings":
@@ -34,6 +35,7 @@ class Settings:
 			public_base_url=_optional_text(values.get("PUBLIC_BASE_URL")),
 			max_webhook_body_bytes=_int(values.get("MAX_WEBHOOK_BODY_BYTES"), 1_048_576, "MAX_WEBHOOK_BODY_BYTES"),
 			review_worker_mode=_text(values.get("REVIEW_WORKER_MODE"), "inline").lower(),
+			redis_url=_optional_text(values.get("REDIS_URL")),
 		)
 		settings.validate()
 		return settings
