@@ -53,6 +53,17 @@ class GitHubApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         self.assertTrue(response.json()["ignored"])
 
+    def test_cors_preflight_allows_configured_origin(self) -> None:
+        response = self.client.options(
+            "/api/reviews",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["access-control-allow-origin"], "http://localhost:3000")
+
     def test_invalid_signature_is_rejected_before_payload_processing(self) -> None:
         body = b"not-json"
         response = self.client.post(

@@ -23,6 +23,7 @@ class Settings:
 	review_worker_mode: str
 	redis_url: str | None = None
 	postgres_url: str | None = None
+	cors_origins: tuple[str, ...] = ("http://localhost:3000",)
 
 	@classmethod
 	def from_env(cls, environ: Mapping[str, str] | None = None) -> "Settings":
@@ -38,6 +39,7 @@ class Settings:
 			review_worker_mode=_text(values.get("REVIEW_WORKER_MODE"), "inline").lower(),
 			redis_url=_optional_text(values.get("REDIS_URL")),
 			postgres_url=_optional_text(values.get("POSTGRES_URL") or values.get("DATABASE_URL")),
+			cors_origins=_origins(values.get("CORS_ORIGINS")),
 		)
 		settings.validate()
 		return settings
@@ -52,6 +54,9 @@ class Settings:
 			_validate_url(self.public_base_url, "PUBLIC_BASE_URL")
 		if self.postgres_url and not self.postgres_url.startswith(("postgresql://", "postgres://")):
 			raise ConfigurationError("POSTGRES_URL must be a PostgreSQL connection URL")
+		for origin in self.cors_origins:
+			if origin != "*":
+				_validate_url(origin, "CORS_ORIGINS")
 		if self.github_app_private_key and self.github_app_private_key_path:
 			raise ConfigurationError("Set only one GitHub private-key source")
 		if require_github_app:
@@ -100,6 +105,16 @@ def _int(value: str | None, default: int, name: str) -> int:
 def _optional_path(value: str | None) -> Path | None:
 	text = _optional_text(value)
 	return Path(text).expanduser() if text else None
+
+
+def _origins(value: str | None) -> tuple[str, ...]:
+	text = _optional_text(value)
+	if not text:
+		return ("http://localhost:3000",)
+	origins = tuple(origin.strip().rstrip("/") for origin in text.split(",") if origin.strip())
+	if not origins:
+		raise ConfigurationError("CORS_ORIGINS must contain at least one origin")
+	return origins
 
 
 def _validate_url(value: str, name: str) -> None:

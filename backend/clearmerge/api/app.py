@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from ..config import Settings
@@ -24,6 +25,13 @@ def create_app(settings: Settings | None = None, review_service: ReviewService |
 
     app = FastAPI(title="ClearMerge API", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings or Settings.from_env()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(app.state.settings.cors_origins),
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     if review_service is None:
         github_adapter = None
         if app.state.settings.github_app_id and app.state.settings.private_key():
