@@ -10,6 +10,8 @@ from pathlib import Path
 
 from .client import GitHubAppClient
 
+_GIT_TIMEOUT_SECONDS = 90
+
 
 class GitHubRepositoryAdapter:
     """Repository operations used by review services, backed by a GitHub App."""
@@ -51,7 +53,12 @@ class GitHubRepositoryAdapter:
             "GIT_TERMINAL_PROMPT": "0",
         }
         try:
-            _run_git(["clone", "--quiet", "--no-checkout", clone_url, str(checkout_dir)], env=env)
+            _run_git(["init", "--quiet", str(checkout_dir)], env=env)
+            _run_git(["-C", str(checkout_dir), "remote", "add", "origin", clone_url], env=env)
+            _run_git(
+                ["-C", str(checkout_dir), "fetch", "--quiet", "--depth", "1", "origin", commit_sha],
+                env=env,
+            )
             _run_git(["-C", str(checkout_dir), "checkout", "--quiet", "--detach", commit_sha], env=env)
         except Exception:
             shutil.rmtree(checkout_dir, ignore_errors=True)
@@ -98,15 +105,21 @@ def _clone_url(pull_request: dict[str, Any], owner: str, repository: str) -> str
 
 
 def _run_git(command: list[str], *, env: dict[str, str]) -> None:
-    completed = subprocess.run(
-        ["git", *command],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=env,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            ["git", *command],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            check=False,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"git {' '.join(command[:2])} timed out after {_GIT_TIMEOUT_SECONDS} seconds"
+        ) from error
     if completed.returncode:
         detail = (completed.stderr or completed.stdout).strip()
         raise RuntimeError(f"git {' '.join(command[:2])} failed: {detail or 'unknown error'}")

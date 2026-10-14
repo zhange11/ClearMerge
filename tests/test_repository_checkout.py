@@ -4,9 +4,10 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
-from backend.clearmerge.github.adapter import GitHubRepositoryAdapter
+from backend.clearmerge.github.adapter import GitHubRepositoryAdapter, _run_git
 from backend.clearmerge.config import Settings
 from backend.clearmerge.github.models import PullRequestEvent
 from backend.clearmerge.services.reviews import ReviewService
@@ -108,6 +109,35 @@ class RepositoryCheckoutTests(unittest.TestCase):
             self.assertEqual(record.state["diff_text"], "exact PR diff")
         finally:
             shutil.rmtree(checkout, ignore_errors=True)
+
+    def test_checkout_uses_only_one_commit_of_history(self) -> None:
+        with tempfile.TemporaryDirectory() as source_directory:
+            source = Path(source_directory)
+            self._git(source, "init")
+            self._git(source, "config", "user.email", "tests@example.com")
+            self._git(source, "config", "user.name", "ClearMerge Tests")
+            (source / "reviewed.txt").write_text("first", encoding="utf-8")
+            self._git(source, "add", "reviewed.txt")
+            self._git(source, "commit", "-m", "first commit")
+            (source / "reviewed.txt").write_text("second", encoding="utf-8")
+            self._git(source, "commit", "-am", "second commit")
+            commit_sha = self._git(source, "rev-parse", "HEAD").stdout.strip()
+
+            checkout = GitHubRepositoryAdapter(FakeGitHubClient(source, commit_sha)).checkout_pull_request(
+                42, "acme", "demo", 12, commit_sha
+            )
+            checkout_path = Path(checkout["repo_path"])
+            try:
+                count = self._git(checkout_path, "rev-list", "--count", "HEAD").stdout.strip()
+                self.assertEqual(count, "1")
+            finally:
+                shutil.rmtree(checkout_path, ignore_errors=True)
+
+    def test_git_timeout_has_clear_error(self) -> None:
+        timeout = subprocess.TimeoutExpired(["git", "fetch"], 90)
+        with patch("backend.clearmerge.github.adapter.subprocess.run", side_effect=timeout):
+            with self.assertRaisesRegex(RuntimeError, "timed out after 90 seconds"):
+                _run_git(["fetch"], env={})
 
     @staticmethod
     def _git(directory: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
