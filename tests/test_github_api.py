@@ -76,6 +76,24 @@ class GitHubApiTests(unittest.TestCase):
         self.assertEqual(review.status_code, 200)
         self.assertEqual(review.json()["commit_sha"], "abc123")
 
+    def test_review_list_and_stats(self) -> None:
+        body = json.dumps(self.payload()).encode()
+        self.client.post(
+            "/webhooks/github",
+            content=body,
+            headers=self.signed_headers(body, delivery="delivery-list", event="pull_request"),
+        )
+
+        listing = self.client.get("/api/reviews?repo=acme/demo&limit=1&offset=0")
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.json()["total"], 1)
+        self.assertEqual(listing.json()["items"][0]["repository"]["name"], "demo")
+
+        stats = self.client.get("/api/stats")
+        self.assertEqual(stats.status_code, 200)
+        self.assertEqual(stats.json()["total_reviews"], 1)
+        self.assertIn("by_decision", stats.json())
+
     def test_body_limit_is_enforced(self) -> None:
         body = b"x" * 4097
         response = self.client.post("/webhooks/github", content=body, headers=self.signed_headers(body))

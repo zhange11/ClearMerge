@@ -28,7 +28,7 @@ class GitHubAppClient:
     def installation_token(self, installation_id: int) -> str:
         response = self.client.post(
             f"/app/installations/{installation_id}/access_tokens",
-            headers={"Authorization": f"Bearer {self.app_jwt()}", "Accept": "application/vnd.github+json"},
+            headers={"Authorization": "Bearer " + self.app_jwt(), "Accept": "application/vnd.github+json"},
         )
         response.raise_for_status()
         return str(response.json()["token"])
@@ -75,4 +75,4 @@ class GitHubAppClient:
         return response.json()
 
     def _headers(self, token: str) -> dict[str, str]:
-        return {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+        return {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json"}

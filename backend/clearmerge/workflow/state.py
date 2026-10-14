@@ -99,6 +99,7 @@ class ReviewState(TypedDict, total=False):
     audit_event_ids: list[str]
     artifact_refs: list[CheckpointRef]
     updated_at: str
+    pipeline_stages: list[dict[str, object]]
     latest_commit_sha: NotRequired[str]
     evidence_commit_sha: NotRequired[str]
     repository_policy: NotRequired[dict[str, object]]
@@ -166,5 +167,6 @@ def new_review_state(
         "errors": [],
         "audit_event_ids": [],
         "artifact_refs": [],
+        "pipeline_stages": [{"name": stage, "status": "pending"} for stage in STAGES],
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }

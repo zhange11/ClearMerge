@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from ..config import Settings
@@ -47,6 +47,13 @@ def create_app(settings: Settings | None = None, review_service: ReviewService |
 
     app.include_router(webhook_router)
     app.include_router(reviews_router)
+    stats_router = APIRouter(prefix="/api")
+
+    @stats_router.get("/stats")
+    async def review_stats():
+        return app.state.review_service.stats()
+
+    app.include_router(stats_router)
     return app
 
 
