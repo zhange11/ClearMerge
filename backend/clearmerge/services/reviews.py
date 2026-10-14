@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from threading import Lock
 from datetime import datetime, timezone
+import shutil
 from typing import Any
 from uuid import uuid4
 
@@ -71,7 +71,7 @@ class ReviewService:
                     "pull_request": event.pull_request,
                 },
                 commit_sha=event.commit_sha,
-                repo_path=str(Path.cwd()),
+                repo_path="",
                 pr_title=event.title,
                 pr_body=event.body,
                 diff_text=diff_text,
@@ -230,11 +230,28 @@ class ReviewService:
             record.state.update({"status": "failed", "errors": [{"stage": "handle_failure", "code": code, "message": "Review worker retry limit reached.", "retryable": False}]})
 
     def _run(self, record: ReviewRecord) -> None:
-        config = {"configurable": {"thread_id": record.thread_id}}
-        result = self._graph.invoke(record.state, config=config)
-        record.state = dict(result)
-        record.state["updated_at"] = datetime.now(timezone.utc).isoformat()
-        _update_pipeline_stages(record.state)
+        if self.github is None:
+            raise RuntimeError("GitHub integration is required to run repository checks")
+        repository = record.state["repository"]
+        checkout = self.github.checkout_pull_request(
+            repository["installation_id"],
+            repository["owner"],
+            repository["name"],
+            repository["pull_request"],
+            record.state["commit_sha"],
+        )
+        checkout_path = checkout["repo_path"]
+        record.state["repo_path"] = checkout_path
+        record.state["diff_text"] = checkout["diff"]
+        try:
+            config = {"configurable": {"thread_id": record.thread_id}}
+            result = self._graph.invoke(record.state, config=config)
+            record.state = dict(result)
+            record.state["updated_at"] = datetime.now(timezone.utc).isoformat()
+            _update_pipeline_stages(record.state)
+        finally:
+            shutil.rmtree(checkout_path, ignore_errors=True)
+            record.state["repo_path"] = ""
 
 
 def _repository_name(state: dict[str, Any]) -> str:
