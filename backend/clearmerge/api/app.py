@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -13,7 +15,14 @@ from .reviews import router as reviews_router
 
 
 def create_app(settings: Settings | None = None, review_service: ReviewService | None = None) -> FastAPI:
-    app = FastAPI(title="ClearMerge API", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield
+        close = getattr(app.state.review_service, "close", None)
+        if close is not None:
+            close()
+
+    app = FastAPI(title="ClearMerge API", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings or Settings.from_env()
     if review_service is None:
         github_adapter = None

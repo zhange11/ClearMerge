@@ -16,6 +16,7 @@ from ..github.models import PullRequestEvent
 from ..workflow import build_review_graph, new_review_state
 from ..workflow.state import STAGES
 from .queue import ReviewJob, ReviewQueue
+from .persistence import PostgresReviewStore, ReviewRecordStore
 
 
 @dataclass
@@ -29,7 +30,13 @@ class ReviewRecord:
 class ReviewService:
     """MVP review registry and graph dispatcher; replace storage with PostgreSQL/queue later."""
 
-    def __init__(self, settings: Settings, github: GitHubRepositoryAdapter | None = None, queue: ReviewQueue | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        github: GitHubRepositoryAdapter | None = None,
+        queue: ReviewQueue | None = None,
+        store: ReviewRecordStore | None = None,
+    ) -> None:
         self.settings = settings
         self.github = github
         self.queue = queue
@@ -37,8 +44,23 @@ class ReviewService:
         self._by_id: dict[str, ReviewRecord] = {}
         self._by_delivery: dict[str, str] = {}
         self._by_revision: dict[tuple[int, str, str, int], str] = {}
-        self._checkpointer = MemorySaver()
+        self._store = store or (PostgresReviewStore(settings.postgres_url) if settings.postgres_url else None)
+        self._checkpointer_context = None
+        if settings.postgres_url:
+            try:
+                from langgraph.checkpoint.postgres import PostgresSaver
+            except ImportError as error:
+                raise RuntimeError("Postgres persistence requires langgraph-checkpoint-postgres") from error
+
+            self._checkpointer_context = PostgresSaver.from_conn_string(settings.postgres_url)
+            self._checkpointer = self._checkpointer_context.__enter__()
+            self._checkpointer.setup()
+        else:
+            self._checkpointer = MemorySaver()
         self._graph = build_review_graph(checkpointer=self._checkpointer)
+        if self._store:
+            for record in self._store.load():
+                self._index(record)
 
     def create_from_event(
         self,
@@ -59,6 +81,7 @@ class ReviewService:
                     self._by_delivery[event.delivery_id] = existing.review_id
                     return existing, False
                 existing.state["status"] = "superseded"
+                self._persist(existing)
             review_id = str(uuid4())
             thread_id = f"review:{review_id}"
             state = new_review_state(
@@ -88,6 +111,7 @@ class ReviewService:
             self._by_id[review_id] = record
             self._by_delivery[event.delivery_id] = review_id
             self._by_revision[revision_key] = review_id
+            self._persist(record)
         if self.settings.review_worker_mode == "queue":
             if self.queue is None:
                 raise RuntimeError("queue mode requires a review queue")
@@ -144,6 +168,7 @@ class ReviewService:
         config = {"configurable": {"thread_id": record.thread_id}}
         result = self._graph.invoke(Command(resume=decision), config=config)
         record.state = dict(result)
+        self._persist(record)
         _update_pipeline_stages(record.state)
         return record
 
@@ -163,6 +188,7 @@ class ReviewService:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
         record.state = state
+        self._persist(record)
         if self.settings.review_worker_mode == "queue":
             if self.queue is None:
                 raise RuntimeError("queue mode requires a review queue")
@@ -213,12 +239,14 @@ class ReviewService:
         if record is None:
             record = ReviewRecord(
                 review_id=review_id,
-                delivery_id="worker-recovered",
+                delivery_id=f"worker-recovered:{review_id}",
                 thread_id=str(state.get("thread_id", f"review:{review_id}")),
                 state=state,
             )
             self._by_id[review_id] = record
+            self._index(record)
         record.state = state
+        self._persist(record)
         self._run(record)
         if self.github and record.state.get("merge_decision"):
             self.github.publish_decision(record.state)
@@ -228,6 +256,7 @@ class ReviewService:
         record = self._by_id.get(review_id)
         if record is not None:
             record.state.update({"status": "failed", "errors": [{"stage": "handle_failure", "code": code, "message": "Review worker retry limit reached.", "retryable": False}]})
+            self._persist(record)
 
     def _run(self, record: ReviewRecord) -> None:
         if self.github is None:
@@ -252,6 +281,28 @@ class ReviewService:
         finally:
             shutil.rmtree(checkout_path, ignore_errors=True)
             record.state["repo_path"] = ""
+
+    def _index(self, record: ReviewRecord) -> None:
+        self._by_id[record.review_id] = record
+        if record.delivery_id != "worker-recovered":
+            self._by_delivery[record.delivery_id] = record.review_id
+        repository = record.state.get("repository", {})
+        self._by_revision[(
+            int(repository.get("installation_id", 0)),
+            str(repository.get("owner", "")),
+            str(repository.get("name", "")),
+            int(repository.get("pull_request", 0)),
+        )] = record.review_id
+
+    def _persist(self, record: ReviewRecord) -> None:
+        if self._store:
+            self._store.save(record)
+
+    def close(self) -> None:
+        if self._checkpointer_context:
+            self._checkpointer_context.__exit__(None, None, None)
+        if self._store:
+            self._store.close()
 
 
 def _repository_name(state: dict[str, Any]) -> str:

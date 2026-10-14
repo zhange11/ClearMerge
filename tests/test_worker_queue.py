@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from copy import deepcopy
 
 from backend.clearmerge.services.queue import InMemoryReviewQueue, ReviewJob
 from backend.clearmerge.services.worker import ReviewWorker
+from backend.clearmerge.services.reviews import ReviewService
+from backend.clearmerge.config import Settings
+from backend.clearmerge.github.models import PullRequestEvent
 
 
 class FakeReviewService:
@@ -61,6 +65,45 @@ class WorkerQueueTests(unittest.TestCase):
         queue.enqueue(ReviewJob("review-1", {"thread_id": "review:review-1", "commit_sha": "abc"}))
 
         self.assertTrue(ReviewWorker(queue, service).process_once())
+
+    def test_review_index_rehydrates_from_store(self) -> None:
+        class Store:
+            def __init__(self):
+                self.records = []
+
+            def load(self):
+                return deepcopy(self.records)
+
+            def save(self, record):
+                self.records = [item for item in self.records if item.review_id != record.review_id]
+                self.records.append(deepcopy(record))
+
+            def close(self):
+                pass
+
+        store = Store()
+        settings = Settings.from_env({"REVIEW_WORKER_MODE": "queue"})
+        first = ReviewService(settings, queue=InMemoryReviewQueue(), store=store)
+        event = PullRequestEvent(
+            delivery_id="persistent-delivery",
+            action="opened",
+            owner="acme",
+            repository="demo",
+            installation_id=42,
+            pull_request=12,
+            commit_sha="abc123",
+            title="Review",
+            body="",
+            sender_id=7,
+            changed_files=1,
+            additions=1,
+            deletions=0,
+            raw={},
+        )
+        record, _ = first.create_from_event(event)
+        second = ReviewService(settings, queue=InMemoryReviewQueue(), store=store)
+        self.assertEqual(second.get(record.review_id).state["commit_sha"], "abc123")
+        self.assertEqual(second.list_records(repo="acme/demo")[0].review_id, record.review_id)
 
 
 if __name__ == "__main__":
