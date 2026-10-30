@@ -2,6 +2,14 @@
 
 The frontend is a TypeScript/React/Vite dashboard for the FastAPI review API.
 
+The dashboard includes:
+
+- Manual review triggering through `POST /api/reviews`.
+- Repository and policy-decision filters.
+- Server-side pagination using `limit`, `offset`, and `total`.
+- Aggregate review statistics from `/api/stats`.
+- API liveness/readiness status from `/healthz` and `/readyz`.
+
 While a worker is processing a review, the detail view:
 
 - Shows `queued` as waiting for a worker.

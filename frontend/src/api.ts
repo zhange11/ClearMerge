@@ -31,9 +31,23 @@ export interface Review {
   updated_at?: string;
 }
 
-interface ReviewListResponse {
+export interface ReviewListResponse {
   items: Review[];
+  limit: number;
+  offset: number;
   total: number;
+}
+
+export interface ReviewStats {
+  total_reviews: number;
+  by_decision: { allow: number; require_approval: number; block: number; pending: number };
+  average_risk_score: number | null;
+  reviews_over_time: Array<{ date: string; count: number }>;
+}
+
+export interface HealthStatus {
+  status: string;
+  worker_mode?: string;
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -48,8 +62,32 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function listReviews(): Promise<ReviewListResponse> {
-  return request<ReviewListResponse>("/api/reviews?limit=100");
+export function listReviews(params: { limit: number; offset: number; decision?: string; repo?: string }): Promise<ReviewListResponse> {
+  const query = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) });
+  if (params.decision) query.set("decision", params.decision);
+  if (params.repo) query.set("repo", params.repo);
+  return request<ReviewListResponse>(`/api/reviews?${query}`);
+}
+
+export function createReview(payload: {
+  repo: string;
+  pull_request: number;
+  installation_id: number;
+  authorized_reviewer_ids: number[];
+}): Promise<Review> {
+  return request<Review>("/api/reviews", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function getStats(): Promise<ReviewStats> {
+  return request<ReviewStats>("/api/stats");
+}
+
+export function getHealth(): Promise<HealthStatus> {
+  return request<HealthStatus>("/healthz");
+}
+
+export function getReadiness(): Promise<HealthStatus> {
+  return request<HealthStatus>("/readyz");
 }
 
 export function getReview(reviewId: string): Promise<Review> {
