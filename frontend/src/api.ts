@@ -72,8 +72,6 @@ export function listReviews(params: { limit: number; offset: number; decision?: 
 export function createReview(payload: {
   repo: string;
   pull_request: number;
-  installation_id: number;
-  authorized_reviewer_ids: number[];
 }): Promise<Review> {
   return request<Review>("/api/reviews", { method: "POST", body: JSON.stringify(payload) });
 }

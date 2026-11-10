@@ -41,7 +41,11 @@ export function App() {
     catch { setHealth(undefined); setReadiness(undefined); }
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 10_000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
   useEffect(() => { void refreshHealth(); const timer = window.setInterval(() => void refreshHealth(), 10_000); return () => window.clearInterval(timer); }, [refreshHealth]);
   const visibleReviews = useMemo(() => statusFilter === "all" ? reviews : reviews.filter((review) => review.status === statusFilter), [reviews, statusFilter]);
   const selected = reviews.find((review) => review.review_id === selectedId) ?? visibleReviews[0];
@@ -72,9 +76,30 @@ function StatsCards({ stats }: { stats: ReviewStats }) { return <section classNa
 function HealthIndicator({ health, readiness }: { health?: HealthStatus; readiness?: HealthStatus }) { const healthy = health?.status === "ok" && readiness?.status === "ready"; return <span className={`health ${healthy ? "healthy" : "unhealthy"}`} title={`API: ${health?.status ?? "unavailable"} / Worker: ${readiness?.status ?? "unavailable"}`}><span className="health-dot" />{healthy ? "API ready" : "API unavailable"}</span>; }
 
 function TriggerReview({ onCreated, onCancel }: { onCreated: (review: Review) => void; onCancel: () => void }) {
-  const [repo, setRepo] = useState(""); const [pullRequest, setPullRequest] = useState(""); const [installationId, setInstallationId] = useState(""); const [reviewers, setReviewers] = useState(""); const [error, setError] = useState<string>(); const [busy, setBusy] = useState(false);
-  const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(undefined); try { onCreated(await createReview({ repo, pull_request: Number(pullRequest), installation_id: Number(installationId), authorized_reviewer_ids: reviewers.split(",").map((id) => Number(id.trim())).filter((id) => Number.isInteger(id) && id > 0) })); } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to trigger review"); } finally { setBusy(false); } };
-  return <div className="modal-backdrop"><form className="modal panel" onSubmit={(event) => void submit(event)}><div className="detail-header"><div><p className="eyebrow">MANUAL REVIEW</p><h2>Trigger a review</h2></div><button type="button" className="secondary-button" onClick={onCancel}>Close</button></div><p className="muted">Fetch a pull request from GitHub and place it into the review pipeline.</p>{error && <div className="alert error">{error}</div>}<label>Repository<input required pattern="^[^/\s]+/[^/\s]+$" placeholder="owner/repository" value={repo} onChange={(event) => setRepo(event.target.value)} /></label><div className="form-row"><label>Pull request<input required min="1" type="number" value={pullRequest} onChange={(event) => setPullRequest(event.target.value)} /></label><label>Installation ID<input required min="1" type="number" value={installationId} onChange={(event) => setInstallationId(event.target.value)} /></label></div><label>Authorized reviewer IDs <span className="muted">(comma-separated)</span><input placeholder="12345, 67890" value={reviewers} onChange={(event) => setReviewers(event.target.value)} /></label><div className="actions"><button type="button" className="secondary-button" onClick={onCancel}>Cancel</button><button className="primary-button" disabled={busy}>{busy ? "Creating…" : "Create review"}</button></div></form></div>;
+  const [repo, setRepo] = useState("");
+  const [pullRequest, setPullRequest] = useState("");
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(undefined);
+    try {
+      onCreated(await createReview({ repo, pull_request: Number(pullRequest) }));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to trigger review");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <div className="modal-backdrop"><form className="modal panel" onSubmit={(event) => void submit(event)}>
+    <div className="detail-header"><div><p className="eyebrow">MANUAL REVIEW</p><h2>Start a review</h2></div><button type="button" className="secondary-button" onClick={onCancel}>Close</button></div>
+    <p className="muted">Enter a GitHub pull request to fetch and review. It will appear as queued immediately.</p>
+    {error && <div className="alert error">{error}</div>}
+    <label>Repository<input required pattern="^[^/\s]+/[^/\s]+$" placeholder="owner/repository" value={repo} onChange={(event) => setRepo(event.target.value)} /></label>
+    <label>Pull request number<input required min="1" type="number" value={pullRequest} onChange={(event) => setPullRequest(event.target.value)} /></label>
+    <div className="actions"><button type="button" className="secondary-button" onClick={onCancel}>Cancel</button><button className="primary-button" disabled={busy}>{busy ? "Starting…" : "Start review"}</button></div>
+  </form></div>;
 }
 
 function ReviewDetail({ review, onUpdate }: { review?: Review; onUpdate: (review: Review) => void }) {

@@ -24,6 +24,8 @@ class Settings:
 	redis_url: str | None = None
 	postgres_url: str | None = None
 	cors_origins: tuple[str, ...] = ("http://localhost:3000",)
+	github_installation_id: int | None = None
+	authorized_reviewer_ids: tuple[int, ...] = ()
 
 	@classmethod
 	def from_env(cls, environ: Mapping[str, str] | None = None) -> "Settings":
@@ -40,6 +42,8 @@ class Settings:
 			redis_url=_optional_text(values.get("REDIS_URL")),
 			postgres_url=_optional_text(values.get("POSTGRES_URL") or values.get("DATABASE_URL")),
 			cors_origins=_origins(values.get("CORS_ORIGINS")),
+			github_installation_id=_optional_int(values.get("GITHUB_INSTALLATION_ID"), "GITHUB_INSTALLATION_ID"),
+			authorized_reviewer_ids=_int_list(values.get("AUTHORIZED_REVIEWER_IDS")),
 		)
 		settings.validate()
 		return settings
@@ -100,6 +104,18 @@ def _optional_int(value: str | None, name: str) -> int | None:
 def _int(value: str | None, default: int, name: str) -> int:
 	parsed = _optional_int(value, name)
 	return default if parsed is None else parsed
+
+
+def _int_list(value: str | None) -> tuple[int, ...]:
+	text = _optional_text(value)
+	if not text:
+		return ()
+	identifiers = tuple(
+		_optional_int(item.strip(), "AUTHORIZED_REVIEWER_IDS")
+		for item in text.split(",")
+		if item.strip()
+	)
+	return tuple(identifier for identifier in identifiers if identifier is not None)
 
 
 def _optional_path(value: str | None) -> Path | None:

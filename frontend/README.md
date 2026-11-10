@@ -5,6 +5,9 @@ The frontend is a TypeScript/React/Vite dashboard for the FastAPI review API.
 The dashboard includes:
 
 - Manual review triggering through `POST /api/reviews`.
+- The start form only requires `owner/repository` and a pull request number. Configure
+  `GITHUB_INSTALLATION_ID` on the API/worker environment; it is intentionally not
+  exposed to browser users.
 - Repository and policy-decision filters.
 - Server-side pagination using `limit`, `offset`, and `total`.
 - Aggregate review statistics from `/api/stats`.
@@ -16,6 +19,8 @@ While a worker is processing a review, the detail view:
 - Shows `running` with the current pipeline stage.
 - Polls the review every three seconds until it reaches an approval or terminal state.
 - Shows `waiting_for_approval` as an actionable pause, not a loading state.
+- Approval uses the reviewer ID entered by the operator and validates it against
+  `AUTHORIZED_REVIEWER_IDS` configured on the backend.
 - Shows retry controls for failed reviews.
 
 Run it from this directory with `npm install` and `npm run dev`. Vite proxies `/api` requests to `http://localhost:8000`.

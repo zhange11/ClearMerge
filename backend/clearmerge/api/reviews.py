@@ -17,8 +17,6 @@ class ApprovalRequest(BaseModel):
 class ManualReviewRequest(BaseModel):
     repo: str = Field(min_length=3, pattern=r"^[^/\s]+/[^/\s]+$")
     pull_request: int = Field(gt=0)
-    installation_id: int = Field(gt=0)
-    authorized_reviewer_ids: list[int] = Field(default_factory=list)
 
 
 @router.get("")
@@ -42,13 +40,16 @@ async def list_reviews(
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def create_review(payload: ManualReviewRequest, request: Request):
     owner, repository = payload.repo.split("/", 1)
+    installation_id = request.app.state.settings.github_installation_id
+    if installation_id is None:
+        raise HTTPException(status_code=503, detail="GITHUB_INSTALLATION_ID is not configured")
     try:
         record, created = request.app.state.review_service.create_manual(
             owner=owner,
             repository=repository,
             pull_request=payload.pull_request,
-            installation_id=payload.installation_id,
-            authorized_reviewer_ids=payload.authorized_reviewer_ids,
+            installation_id=installation_id,
+            authorized_reviewer_ids=list(request.app.state.settings.authorized_reviewer_ids),
         )
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
